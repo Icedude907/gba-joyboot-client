@@ -27,12 +27,14 @@ impl<T: JOYListener> JOYManager<T>{
 
     /// Processes JOY_RESET
     pub fn reset(&mut self)->[u8; 3]{
+        // println!("JOY reset -> stat = {:02x}", self.state.joystat);
         let ret = [0, 4, self.state.joystat];
         self.consumer.handle_reset(&mut self.state);
         return ret;
     }
     /// Processes JOY_POLL
     pub fn poll(&mut self)->[u8; 3]{
+        // println!("JOY poll -> stat = {:02x}", self.state.joystat);
         let ret = [0, 4, self.state.joystat];
         self.consumer.on_poll(&mut self.state);
         return ret;
@@ -41,16 +43,18 @@ impl<T: JOYListener> JOYManager<T>{
     pub fn recv(&mut self, data: [u8; 4]) -> [u8; 1]{
         self.state.joystat |= 0b0000_0010; // Set flag
         let ret = [self.state.joystat];
-        self.state.recv_buf = u32::from_be_bytes(data);
+        // println!("JOY recv: {:02x}{:02x}{:02x}{:02x} -> {:02x}", data[0], data[1], data[2], data[3], ret[0]);
+        self.state.recv_buf = u32::from_le_bytes(data); // NOTE: data[0] is the bottom byte of JOY_RECV_LO, hence LE.
         self.consumer.on_recv(&mut self.state);
         return ret;
     }
     /// Processes JOY_TRANS
     pub fn send(&mut self) -> [u8; 5]{
         let ret = {
-            let b = self.state.send_buf.to_be_bytes();
+            let b = self.state.send_buf.to_le_bytes(); // JOY_TRANS_LO is out[0], hence the send buffer is little endian.
             [b[0], b[1], b[2], b[3], self.state.joystat]
         };
+        // println!("JOY send -> {:02x}{:02x}{:02x}{:02x}, stat = {:02x}", ret[0], ret[1], ret[2], ret[3], ret[4]);
         self.state.joystat &= 0b1111_0111; // Clear flag (happens after the packet is sent)
         self.consumer.on_send(&mut self.state);
         return ret;
@@ -108,7 +112,7 @@ impl JOYState{
 
     /// Updates the joystat register (send to the master with every request),
     /// preseving automatically managed bitflags.
-    pub fn write_joy(&mut self, x: u8){
+    pub fn write_joy_safe(&mut self, x: u8){
         self.joystat = x & 0b1111_0101
           | self.joystat & 0b0000_1010;
     }

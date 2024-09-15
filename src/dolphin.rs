@@ -94,19 +94,16 @@ impl<T: JOYListener> DolphinConnection<T>{
                 bitsOnLine += 24;
                 let out = self.consumer.as_mut().map_or([0, 4, joystat_default], |x| x.reset());
                 self.dat.write(&out).await.unwrap();
-                // println!("JOY reset -> stat = {:02x}", out[2]);
             }
             JOYCMD::JOY_POLL  => {
                 bitsOnLine += 24;
                 let out = self.consumer.as_mut().map_or([0, 4, joystat_default], |x| x.poll());
                 self.dat.write(&out).await.unwrap();
-                // println!("JOY poll -> stat = {:02x}", out[2]);
             }
             JOYCMD::JOY_TRANS => {
                 bitsOnLine += 40;
                 let out = self.consumer.as_mut().map_or([0, 0, 0, 0, joystat_default], |x| x.send());
                 self.dat.write_all(&out).await.unwrap();
-                // println!("JOY send -> {:02x}{:02x}{:02x}{:02x}, stat = {:02x}", out[0], out[1], out[2], out[3], out[4]);
             }
             JOYCMD::JOY_RECV  => {
                 bitsOnLine += 40;
@@ -114,7 +111,6 @@ impl<T: JOYListener> DolphinConnection<T>{
                 self.dat.read_exact(&mut buf).await.unwrap(); // Read received bytes
                 let out = self.consumer.as_mut().map_or([joystat_default], |x| x.recv(buf));
                 self.dat.write(&out).await.unwrap();
-                // println!("JOY recv: {:02x}{:02x}{:02x}{:02x} -> {:02x}", buf[0], buf[1], buf[2], buf[3], out[0]);
             }
         }
         self.dat.flush().await.unwrap(); // Send response over the wire.
