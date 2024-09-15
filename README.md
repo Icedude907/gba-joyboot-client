@@ -6,15 +6,17 @@ Additionally, this project implements functionality to connect to Dolphin over t
 NOTE: Timing synchronisation is not implemented for the moment.
 NOTE: This protocol is *super high overhead* so its likely not useful outside of localhost scenarios.
 
+Once the data is received, the program dumps the rom to a file in the current working directory called `multibootrom.mbgba`.
+
 Progress:
 - [x] Connecting to Dolphin via the mGBA protocol
 - [x] Handshaking
 - [x] Receiving rom
 - [x] Deobfuscating
     - TODO: Reading slightly too many bytes.
-- [ ] Finalising / Ending transmission
+- [x] Finalising / Ending transmission
 - [ ] Verifying received data
-- [ ] Dumping output
+- [~] Dumping output
 - [ ] Ironing out quirks
 - [ ] Code cleanup
 

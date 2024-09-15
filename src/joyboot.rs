@@ -1,25 +1,35 @@
 //! Multiboot client spoofer over the JoyBus protocol.
-use crate::JOY::{JOYListener, JOYState};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::JOY::{JOYListener, JOYState};
+
+#[derive(PartialEq, Eq)]
 enum JoybootClientState{
-    Init,
+    Announce,
+    KeyExch,
     RecvHeader,
-    RecvObfuscated, // Post 0xC0 bytes
-    Dump,
+    RecvObfuscated, // After 0xC0 bytes
+    PostRecv, // Transmit 0 on the wire
+    Completed,
 }
 
 pub struct JoybootClient{
     state: JoybootClientState,
-    ewram: Vec<u32>,
+    pub ewram: Vec<u32>,
     //
-    datalen: u32,
+    clientkey: u32,
+    pub datalen: u32,
     readpos: u32,
 }
+
+#[derive(PartialEq, Eq)]
+pub enum JoybootStatus{
+    Receiving,
+    FinOk,
+    FinErr,
+}
+
 impl JoybootClient{
-    // Real clients use pseudo-random value (from doRandom?). This is just one I dumped.
-    const CLIENT_KEY: u32 = 0xD4CC95B4;
-    // Little endian B4, 95, CC, D4
-    // hex(0xD4CC95B4 ^ 0x6f646573)  =>  '0xbba8f0c7'
 
     // TCRF says this was developer self-credit in the obfuscation bytes, brilliant!
     const KeyMagic: [u8; 8] = *b"Kawasedo";
@@ -28,26 +38,44 @@ impl JoybootClient{
 
     pub fn new() -> Self{
         Self{
-            state: JoybootClientState::Init,
+            state: JoybootClientState::Announce,
             ewram: vec![],
+            clientkey: Self::generate_random_key(),
             datalen: 0, readpos: 0,
         }
+    }
+    // Signals if the Joyboot Client is still receiving data.
+    pub fn status(&self) -> JoybootStatus{
+        if self.state == JoybootClientState::Completed{
+            return JoybootStatus::FinOk;
+        }
+        return JoybootStatus::Receiving;
+    }
+
+    fn generate_random_key()->u32{
+        let mut x = 0;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+        for _ in 0..(now % 1000 +5){ // Let it stew
+            x = Self::doRandom(x);
+        }
+        return x;
     }
 }
 impl JOYListener for JoybootClient{
     fn handle_init(&mut self, context: &mut JOYState) {
         // Tells remote we are alive. Remote sends RESET.
         context.write_send_buf(0);
+        self.state = JoybootClientState::KeyExch;
     }
     fn handle_reset(&mut self, context: &mut JOYState) {
-        // Send our 'random' key.
-        context.write_send_buf(Self::CLIENT_KEY ^ Self::KeyClientTrf);
+        // Send our 'random' key. Just make sure we transmitted the 0
+        context.write_send_buf(self.clientkey ^ Self::KeyClientTrf);
         context.write_joy_safe(0x10);
-        self.state = JoybootClientState::Init;
+        self.state = JoybootClientState::KeyExch;
     }
     fn on_recv(&mut self, context: &mut JOYState) {
         match self.state{
-            JoybootClientState::Init => {
+            JoybootClientState::KeyExch => {
                 let data = context.read_recv_buf().0; // E.g. dfc1f5d7
 
                 let header_decrypt = {
@@ -97,28 +125,32 @@ impl JOYListener for JoybootClient{
                 let data = context.read_recv_buf().0;
                 context.joystat ^= 0x10;
                 self.ewram[self.readpos as usize/4] = data;
-                self.readpos += 4;
 
-                if(self.readpos >= self.datalen){
-                    println!("\tDONE recv.");
-                    self.state = JoybootClientState::Dump;
+                self.readpos += 4;
+                if(self.readpos >= self.datalen){ // TODO: Can we short circuit this to acquire a session id faster? It'd make development faster.
                     self.dodecrypt();
-                    println!("DONE decrypt.");
-                        // DEBUG: Dump to file
-                        let bytes: Vec<u8> = self.ewram.iter().map(|x| x.to_le_bytes()).flatten().collect();
-                        std::fs::write("./multibootrom.mbgba", bytes).unwrap();
-                        println!("Done write.");
-                    std::process::exit(0);
+                    println!("\tDONE recv / decrypt.");
+                    self.state = JoybootClientState::PostRecv;
+                    context.write_joy_safe(0);
+                    context.write_send_buf(0);
                 }
             },
-            JoybootClientState::Dump => {
-                // TODO: What now?
-            }
+            _ => {}
         }
     }
     fn on_send(&mut self, context: &mut JOYState) {
-        // Fires after we send our CLIENT_KEY - makes sure the master knows we sent it.
-        context.write_joy_safe(0x10); // 0x12
+        if self.state == JoybootClientState::KeyExch{
+            // Fires after we send our CLIENT_KEY - makes sure the master knows we sent it.
+            context.write_joy_safe(0x10); // 0x12
+        }else if self.state == JoybootClientState::PostRecv{
+            self.state = JoybootClientState::Completed; // send 0 to say we done.
+            println!("DONE multiboot download");
+                // DEBUG: Dump to file
+                let bytes: Vec<u8> = self.ewram.iter().map(|x| x.to_le_bytes()).flatten().collect();
+                std::fs::write("./multibootrom.mbgba", bytes).unwrap();
+                println!("Done write. Exiting...");
+                std::process::exit(0);
+        }
     }
 }
 impl JoybootClient{
@@ -146,7 +178,7 @@ impl JoybootClient{
     fn dodecrypt(&mut self){
         let mut index: u32 = 0xC0;
         // Rolling key
-        let mut key: u32 = Self::CLIENT_KEY;
+        let mut key: u32 = self.clientkey;
         const key_type: u32 = 0x20796220; // JOYBUS = 0x20796220, Normal = 0x43202F2F, Multi = 0x6465646F.
 
         while(index <= self.datalen){
