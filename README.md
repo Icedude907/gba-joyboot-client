@@ -1,6 +1,6 @@
 # GBA JoyBus Multiboot Receiver
-There are many sources detailing how to _send_ a multiboot program to a GBA via Serial/UART mode.
-However, there doesn't seem to be any project detailing how to _receive_ a program over JoyBus - an alternative protocol which doesn't require strict timings and can therefore service clients without locking up a CPU core of the sender.
+There are many sources detailing how to _send_ a multiboot program to a GBA via Serial/UART mode - which works in chunks of 16 bits with a fixed baud rate.
+However, there doesn't seem to be any project detailing how to _receive_ a program over JoyBus - an alternative protocol which operates in chunks of 32 bits and doesn't require strict timing due to hardware assistance (and can therefore service clients without locking up a CPU core of the sender).
 
 Additionally, this project implements functionality to connect to Dolphin over the network, as if it was a client instance of mGBA.
 NOTE: Timing synchronisation is not implemented for the moment.

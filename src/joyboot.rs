@@ -16,9 +16,6 @@ pub struct JoybootClient{
     readpos: u32,
 }
 impl JoybootClient{
-    /// Max EWRAM size in bytes.
-    const EWRAM_SIZE: usize = 256*1024;
-
     // Real clients use pseudo-random value (from doRandom?). This is just one I dumped.
     const CLIENT_KEY: u32 = 0xD4CC95B4;
     // Little endian B4, 95, CC, D4
@@ -26,11 +23,13 @@ impl JoybootClient{
 
     // TCRF says this was developer self-credit in the obfuscation bytes, brilliant!
     const KeyMagic: [u8; 8] = *b"Kawasedo";
+    const KeyClientTrf: u32 = 0x6f646573; // 'sedo'
+    const KeyData: u32 = 0x6177614B; // 'awaK'
 
     pub fn new() -> Self{
         Self{
             state: JoybootClientState::Init,
-            ewram: vec![0; Self::EWRAM_SIZE/4],
+            ewram: vec![],
             datalen: 0, readpos: 0,
         }
     }
@@ -42,7 +41,7 @@ impl JOYListener for JoybootClient{
     }
     fn handle_reset(&mut self, context: &mut JOYState) {
         // Send our 'random' key.
-        context.write_send_buf(Self::CLIENT_KEY ^ 0x6f646573); // 'awaK'
+        context.write_send_buf(Self::CLIENT_KEY ^ Self::KeyClientTrf);
         context.write_joy_safe(0x10);
         self.state = JoybootClientState::Init;
     }
@@ -63,7 +62,7 @@ impl JOYListener for JoybootClient{
                     uVar3 += 0x80;
                 }
                 uVar3 = ((uVar3 << 7 | sessionKey & 0x7f) + 0x3f) << 3;
-                let mut datalen = 0x0003FFF8 & uVar3;
+                let mut datalen = 0x0003FFF8 & uVar3; // The protocol implicitly limits the max transfer size to ~256k (size of ewram) - slightly off.
                 if (datalen != uVar3) {
                     // It appears this is some kind of error detection mechanism.
                     // Triggering this prevents booting on hardware. (i.e.: bit 23 of KeyB must be 1)
@@ -72,12 +71,13 @@ impl JOYListener for JoybootClient{
                     datalen = 0x4480;
                     println!("Error: Tripped detection mechanism?")
                 }
-                let datalen = datalen + 0xc;
-                let destptr = 0x0200_0000 + datalen;
-                println!("\tFinal pointer: {:08x} (data length: {} bytes)", destptr, datalen);
+
+                let mut datalen = datalen + 0xc;
+                println!("\tData length: {} bytes", datalen);
 
                 // Next state
                 self.datalen = datalen;
+                self.ewram = vec![0; datalen as usize / 4 + 4];
                 self.readpos = 0;
                 self.state = JoybootClientState::RecvHeader;
                 context.write_joy_safe(0x20);
@@ -104,6 +104,10 @@ impl JOYListener for JoybootClient{
                     self.state = JoybootClientState::Dump;
                     self.dodecrypt();
                     println!("DONE decrypt.");
+                        // DEBUG: Dump to file
+                        let bytes: Vec<u8> = self.ewram.iter().map(|x| x.to_le_bytes()).flatten().collect();
+                        std::fs::write("./multibootrom.mbgba", bytes).unwrap();
+                        println!("Done write.");
                     std::process::exit(0);
                 }
             },
@@ -114,7 +118,7 @@ impl JOYListener for JoybootClient{
     }
     fn on_send(&mut self, context: &mut JOYState) {
         // Fires after we send our CLIENT_KEY - makes sure the master knows we sent it.
-        context.joystat = 0x12;
+        context.write_joy_safe(0x10); // 0x12
     }
 }
 impl JoybootClient{
@@ -134,7 +138,7 @@ impl JoybootClient{
     }
     // Single iteration of the bios random function. Generates the transmission key.
     fn doRandom(x: u32)->u32{
-        return x.wrapping_mul(0x6177614b).wrapping_add(1);
+        return x.wrapping_mul(Self::KeyData).wrapping_add(1);
     }
 
     // Note: GBA bios only does max steps of 137 u16 chunks at a time(?)
@@ -143,14 +147,13 @@ impl JoybootClient{
         let mut index: u32 = 0xC0;
         // Rolling key
         let mut key: u32 = Self::CLIENT_KEY;
-        const key_const: u32 = 0x6177614B; // 'awaK'
         const key_type: u32 = 0x20796220; // JOYBUS = 0x20796220, Normal = 0x43202F2F, Multi = 0x6465646F.
 
         while(index <= self.datalen){
             // Key iteration
-            key = key.wrapping_mul(key_const).wrapping_add(1);
+            key = key.wrapping_mul(Self::KeyData).wrapping_add(1);
             // println!("KeyTransform: {:08x} * {:08x} + 1 -> {:08x}", key, key_const, key2);
-            // Decode with key
+            // Decode
             let ptrkey = (0x02000000 + index).wrapping_neg();
             let word = self.ewram[index as usize /4] ^ key ^ ptrkey ^ key_type;
             // Store
@@ -160,10 +163,5 @@ impl JoybootClient{
             // let CRC = Self::docrc(self.crc, word, primpoly);
             index += 4;
         }
-
-        // DEBUG: Dump to file
-        let bytes: Vec<u8> = self.ewram.iter().map(|x| x.to_le_bytes()).flatten().collect();
-        std::fs::write("./multibootrom.mbgba", bytes).unwrap();
-        println!("Done Write.");
     }
 }
