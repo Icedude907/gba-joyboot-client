@@ -30,6 +30,10 @@ pub enum JoybootStatus{
 }
 
 impl JoybootClient{
+    // Real clients use pseudo-random value (from doRandom?). This is just one I dumped.
+    // const CLIENT_KEY: u32 = 0xD4CC95B4;
+    // Little endian B4, 95, CC, D4
+    // hex(0xD4CC95B4 ^ 0x6f646573)  =>  '0xbba8f0c7'
 
     // TCRF says this was developer self-credit in the obfuscation bytes, brilliant!
     const KeyMagic: [u8; 8] = *b"Kawasedo";
@@ -41,7 +45,7 @@ impl JoybootClient{
             state: JoybootClientState::Announce,
             ewram: vec![],
             clientkey: Self::generate_random_key(),
-            datalen: 0, readpos: 0,
+            datalen: 0, readpos: 0
         }
     }
     // Signals if the Joyboot Client is still receiving data.
@@ -51,7 +55,6 @@ impl JoybootClient{
         }
         return JoybootStatus::Receiving;
     }
-
     fn generate_random_key()->u32{
         let mut x = 0;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
@@ -60,18 +63,37 @@ impl JoybootClient{
         }
         return x;
     }
+    fn handle_protocol_error(&mut self, context: &mut JOYState){
+        println!("Protocol restart due to error.");
+        context.write_joy_safe(0);
+        context.write_send_buf(0);
+        self.clientkey = Self::generate_random_key();
+        self.datalen = 0;
+        self.readpos = 0;
+        self.state = JoybootClientState::Announce;
+    }
 }
 impl JOYListener for JoybootClient{
     fn handle_init(&mut self, context: &mut JOYState) {
-        // Tells remote we are alive. Remote sends RESET.
+        // Tells remote we are alive
         context.write_send_buf(0);
-        self.state = JoybootClientState::KeyExch;
     }
     fn handle_reset(&mut self, context: &mut JOYState) {
-        // Send our 'random' key. Just make sure we transmitted the 0
-        context.write_send_buf(self.clientkey ^ Self::KeyClientTrf);
-        context.write_joy_safe(0x10);
-        self.state = JoybootClientState::KeyExch;
+        if self.state == JoybootClientState::Announce {
+            // Send our 'random' key.
+            context.write_send_buf(self.clientkey ^ Self::KeyClientTrf);
+            context.write_joy_safe(0x10);
+            self.state = JoybootClientState::KeyExch;
+        }else{
+            // Something went wrong - try and reset the protocol
+            self.handle_protocol_error(context);
+        }
+    }
+    fn on_send(&mut self, context: &mut JOYState) {
+        if self.state == JoybootClientState::PostRecv{
+            self.state = JoybootClientState::Completed; // send 0 to say we done.
+            println!("DONE multiboot download");
+        }
     }
     fn on_recv(&mut self, context: &mut JOYState) {
         match self.state{
@@ -127,7 +149,7 @@ impl JOYListener for JoybootClient{
                 self.ewram[self.readpos as usize/4] = data;
 
                 self.readpos += 4;
-                if(self.readpos >= self.datalen){ // TODO: Can we short circuit this to acquire a session id faster? It'd make development faster.
+                if self.readpos >= self.datalen { // TODO: Can we short circuit this to acquire a session id faster? It'd make development faster.
                     self.dodecrypt();
                     println!("\tDONE recv / decrypt.");
                     self.state = JoybootClientState::PostRecv;
@@ -136,20 +158,6 @@ impl JOYListener for JoybootClient{
                 }
             },
             _ => {}
-        }
-    }
-    fn on_send(&mut self, context: &mut JOYState) {
-        if self.state == JoybootClientState::KeyExch{
-            // Fires after we send our CLIENT_KEY - makes sure the master knows we sent it.
-            context.write_joy_safe(0x10); // 0x12
-        }else if self.state == JoybootClientState::PostRecv{
-            self.state = JoybootClientState::Completed; // send 0 to say we done.
-            println!("DONE multiboot download");
-                // DEBUG: Dump to file
-                let bytes: Vec<u8> = self.ewram.iter().map(|x| x.to_le_bytes()).flatten().collect();
-                std::fs::write("./multibootrom.mbgba", bytes).unwrap();
-                println!("Done write. Exiting...");
-                std::process::exit(0);
         }
     }
 }
