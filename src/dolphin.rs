@@ -1,4 +1,4 @@
-use async_std::{
+  use async_std::{
     io::ReadExt, net::{TcpListener, TcpStream, ToSocketAddrs}, prelude::*, task // 3
 };
 use num_derive::{FromPrimitive, ToPrimitive};
@@ -53,7 +53,7 @@ impl<T: JOYListener> DolphinConnection<T>{
                 if clock_slice < 0 {
                     // TODO: Falling behind? Poll
                 }
-                let mut slice_recv: [u8; 4] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
+                let mut slice_recv: [u8; 4] = [0; 4];
                 self.clk.read_exact(&mut slice_recv).await.unwrap();
                 let offset = i32::from_be_bytes(slice_recv);
                 clock_slice = clock_slice.wrapping_add(offset);
@@ -72,7 +72,7 @@ impl<T: JOYListener> DolphinConnection<T>{
     }
     /// Empty the received buffers to make sure we don't start forwarding garbage.
     async fn recvflush(strm: &mut TcpStream){
-        let mut buf: [u8; 32] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
+        let mut buf: [u8; 32] = [0; 32];
         while strm.read(&mut buf).await.unwrap() == size_of_val(&buf) {}
     }
     async fn process_command(&mut self) -> bool{
@@ -107,7 +107,7 @@ impl<T: JOYListener> DolphinConnection<T>{
             }
             JOYCMD::JOY_RECV  => {
                 bitsOnLine += 40;
-                let mut buf: [u8; 4] = unsafe{ std::mem::MaybeUninit::uninit().assume_init() };
+                let mut buf: [u8; 4] = [0; 4];
                 self.dat.read_exact(&mut buf).await.unwrap(); // Read received bytes
                 let out = self.consumer.as_mut().map_or([joystat_default], |x| x.recv(buf));
                 self.dat.write(&out).await.unwrap();
